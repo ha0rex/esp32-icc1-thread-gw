@@ -1,0 +1,34 @@
+menu "ICC-1 Thread Gateway"
+
+    config WIFI_ENABLED
+        bool "Enable Wi-Fi SoftAP / STA + portal"
+        default y
+
+    config THREAD_HOST_ENABLED
+        bool "Enable OpenThread host (Spinel → ICC RCP)"
+        default y
+
+    config MATTER_BRIDGE_ENABLED
+        bool "Enable Matter bridge scaffolding"
+        default y
+        help
+            When y, matter_bridge starts after Wi-Fi. Full CHIP stack requires
+            linking ESP-Matter (see docs/MATTER.md). Without it, a status stub runs.
+
+    config ICC_UART_TX_GPIO
+        int "ICC UART TX GPIO (ESP → ICC RX)"
+        default 2
+
+    config ICC_UART_RX_GPIO
+        int "ICC UART RX GPIO (ESP ← ICC TX)"
+        default 4
+
+    config ICC_UART_BAUD
+        int "ICC UART baud (Spinel HDLC)"
+        default 460800
+        help
+            OpenThread RCP images commonly use 460800. Match the OT-RCP build
+            flashed to the ICC-1-A. Zigbee NCP images use 115200 — wrong baud
+            will look like CRC garbage.
+
+endmenu

@@ -1,0 +1,18 @@
+# Example OpenOCD config — customize for your ESP32 CMSIS-DAP-over-Wi-Fi probe.
+# Copy to openocd-icc-remote.cfg and adjust host/port/driver per your probe docs.
+
+# --- Option A: CMSIS-DAP USB (wired adapter) ---
+# source [find interface/cmsis-dap.cfg]
+# transport select swd
+
+# --- Option B: remote bitbang over TCP (common Wi-Fi DAP pattern) ---
+adapter driver remote_bitbang
+remote_bitbang host 192.168.4.1
+remote_bitbang port 3335
+transport select swd
+
+source [find target/efm32.cfg]
+adapter speed 1000
+
+# Optional: bind GDB
+# gdb_port 3333
