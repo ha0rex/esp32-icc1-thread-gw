@@ -10,7 +10,7 @@ Independent project from `esp32-icc1-zigbee-gw`. Same *product shape* (SoftAP po
 | OpenThread **RCP** fits MG1 F256 (~100 KB flash / ~16 KB RAM used on similar Lidl MG1B builds) | **Confirmed for MG1 class**; ICC-A-1 pinout must match UART in the RCP image |
 | Multi-PAN Zigbee+Thread on one MG1 | **Possible** (Silabs CPC / multi-PAN) but **out of scope** here — this gateway is Thread-only on its ICC |
 | ESP32-S3 hosts OTBR + Matter + portal | **Feasible with PSRAM**; C3 **not recommended** |
-| Full CHIP commissioning in-tree without ESP-Matter | **Not done** — scaffold + docs; link [ESP-Matter](https://github.com/espressif/esp-matter) for production Matter |
+| Standalone Matter commissioning | **Implemented** with ESP-Matter controller/commissioner; local development fabric |
 
 ## Target topology
 
@@ -34,17 +34,16 @@ Phone / Matter controller / browser
 | Component | Role |
 | --- | --- |
 | `icc_uart` | UART driver to ICC |
-| `spinel_host` | Minimal HDLC+Spinel probe (`PROP_NCP_VERSION`) |
-| `thread_host` | Network intent / status façade → future `openthread` + OTBR |
-| `matter_bridge` | Commissioning placeholders → future ESP-Matter |
-| `wifi_manager` | SoftAP `ICC1-Thread-XXXX` + STA slots |
-| `web` | Portal tabs: Overview, Thread, Devices, System |
+| ESP-IDF `openthread` | OpenThread host and OTBR over the ICC UART RCP |
+| ESP-Matter controller | Local fabric, BLE commissioner, interaction commands |
+| `main/gateway_nodes` | NVS sensor registry and contact/motion subscriptions |
+| Legacy components | Previous portal/scaffold retained but not started by the MVP |
 
 ## Incremental roadmap
 
-1. **Done in 0.1.0:** UART Spinel probe, SoftAP/STA portal, Matter status scaffold, ICC flash guide (CMSIS-DAP over Wi‑Fi / TCP).
-2. **Next:** ESP-IDF `openthread` component with `OT_RADIO_SPINEL_UART` pointing at `icc_uart` baud/pins; form/join dataset; SRP/`otbr` NAT64 as needed.
-3. **Then:** ESP-Matter root node + aggregator; dynamic endpoints for bridged accessories; QR / manual pairing code from real discriminator.
+1. **Done in 0.1.0:** UART probe, SoftAP/STA portal, and ICC flash guide.
+2. **Done in 0.2.0:** ESP-IDF OTBR, ESP-Matter commissioner, persistent sensor registry, and contact/motion subscriptions.
+3. **Next:** Flash and validate the ICC OpenThread RCP, commission the physical IKEA sensors, then expose pairing and live state in the web portal.
 
 ## Hardware notes (ICC UART)
 

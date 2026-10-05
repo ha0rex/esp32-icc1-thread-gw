@@ -3,6 +3,9 @@ sdkconfig
 sdkconfig.old
 dependencies.lock
 managed_components/
+scripts/export-sdk.sh
+paa_cert/*.der
+paa_cert/*.pem
 .vscode/
 .idea/
 *.pyc

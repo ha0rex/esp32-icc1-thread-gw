@@ -18,20 +18,20 @@ Phone / Matter controller / browser
      Thread mesh
 ```
 
-**Current firmware version:** `0.1.0` (see `PROJECT_VER` in `CMakeLists.txt`)
+**Current firmware version:** `0.2.0` (see `PROJECT_VER` in `CMakeLists.txt`)
 
 ---
 
-## Features (v0.1.0)
+## Features (v0.2.0)
 
 | Area | Status |
 | --- | --- |
-| SoftAP provisioning (`ICC1-Thread-XXXX`) + STA | **Working** |
-| Web portal (Overview / Thread / Devices / System) | **Working** |
-| ICC UART + Spinel RCP probe | **Working** (needs OT-RCP on ICC) |
-| Thread form/leave API | **Scaffold** (intent + NVS; full OT attach next) |
-| Matter commissioning / bridging | **Scaffold** — link ESP-Matter ([docs/MATTER.md](docs/MATTER.md)) |
-| Device inventory / groups / thermostats | **Planned** (parity with Zigbee twin) |
+| Wi-Fi station setup from serial console | **Implemented** |
+| ICC UART + OpenThread Border Router | **Implemented** (needs OT-RCP on ICC) |
+| Matter controller / BLE-Thread commissioner | **Implemented** |
+| Contact and occupancy subscriptions | **Implemented** |
+| Persistent sensor registry | **Implemented** |
+| Web portal | **Legacy UI; not started by the controller MVP** |
 
 Architecture decisions: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**  
 ICC flashing (CMSIS-DAP over Wi‑Fi): **[docs/icc-ot-rcp-flash.md](docs/icc-ot-rcp-flash.md)**
@@ -68,13 +68,14 @@ SWD pads for programming: see [docs/icc-ot-rcp-flash.md](docs/icc-ot-rcp-flash.m
 
 ```bash
 cd ~/esp32-icc1-thread-gw
-. $HOME/esp/esp-idf/export.sh   # or your IDF install
-idf.py set-target esp32s3
+./scripts/bootstrap.sh
+source scripts/export-sdk.sh
 idf.py build
 idf.py -p /dev/cu.usbmodem* flash monitor
 ```
 
-First boot (no STA credentials): join SoftAP **`ICC1-Thread-XXXX`**, open **http://192.168.4.1**, set home Wi‑Fi under **System**.
+Configure Wi-Fi and commission sensors from the serial Matter shell. See
+**[docs/MATTER.md](docs/MATTER.md)** for the complete command sequence.
 
 ---
 
