@@ -40,6 +40,29 @@ namespace {
 
 const char *TAG = "gateway";
 bool s_otbr_initialized;
+bool s_otbr_retry_started;
+
+bool thread_attached(void);
+
+void otbr_retry_task(void *)
+{
+    for (int attempt = 1; attempt <= 12 && !s_otbr_initialized; ++attempt) {
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        if (!thread_attached()) {
+            continue;
+        }
+        esp_openthread_lock_acquire(portMAX_DELAY);
+        esp_err_t err = esp_openthread_border_router_init();
+        esp_openthread_lock_release();
+        if (err == ESP_OK) {
+            s_otbr_initialized = true;
+            ESP_LOGI(TAG, "OpenThread Border Router started");
+            break;
+        }
+        ESP_LOGW(TAG, "Border router retry %d failed: %s", attempt, esp_err_to_name(err));
+    }
+    vTaskDelete(nullptr);
+}
 
 bool thread_attached(void)
 {
@@ -101,6 +124,12 @@ void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
                 ESP_LOGI(TAG, "OpenThread Border Router started");
             } else {
                 ESP_LOGE(TAG, "OTBR start failed: %s", esp_err_to_name(err));
+                // The first IPv4 event often arrives while the RCP is still
+                // resetting. Without a later success, device discovery times out.
+                if (!s_otbr_retry_started) {
+                    s_otbr_retry_started = true;
+                    xTaskCreate(otbr_retry_task, "otbr", 6144, nullptr, 3, nullptr);
+                }
             }
         }
 #endif

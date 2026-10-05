@@ -16,13 +16,25 @@
 #include "esp_matter_controller_cluster_command.h"
 #include "esp_matter_controller_read_command.h"
 #include "esp_matter_controller_subscribe_command.h"
+#include "esp_matter_controller_client.h"
 #include "esp_matter_controller_utils.h"
 #include "esp_matter_controller_write_command.h"
+#include "esp_openthread.h"
+#include "esp_openthread_lock.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "lib/core/ScopedNodeId.h"
 #include "lib/core/TLV.h"
 #include "lib/support/CHIPMem.h"
 #include "nvs.h"
+#include "openthread/ip6.h"
+#include "openthread/thread.h"
+#include "openthread/thread_ftd.h"
+#include "platform/PlatformManager.h"
+
+#include <controller/CHIPDeviceController.h>
+#include <inet/IPAddress.h>
+#include <transport/SecureSession.h>
 
 namespace {
 
@@ -1792,6 +1804,14 @@ esp_err_t command_dispatch(int argc, char **argv)
 
 } // namespace
 
+struct peer_slot_t {
+    uint64_t node_id;
+    otIp6Address ip;
+    bool have;
+};
+static peer_slot_t s_peers[kMaxNodes];
+static SemaphoreHandle_t s_peer_lock;
+
 esp_err_t gateway_nodes_init(void)
 {
     if (s_loaded) {
@@ -1802,6 +1822,9 @@ esp_err_t gateway_nodes_init(void)
     memset(s_live, 0, sizeof(s_live));
     if (!s_lock) {
         s_lock = xSemaphoreCreateMutex();
+    }
+    if (!s_peer_lock) {
+        s_peer_lock = xSemaphoreCreateMutex();
     }
     nvs_handle_t handle;
     esp_err_t err = nvs_open(kNvsNamespace, NVS_READONLY, &handle);
@@ -1855,8 +1878,19 @@ void copy_nodes(node_entry_t *out, size_t &count)
     unlock_registry();
 }
 
+static void cache_peer_ips(const node_entry_t *nodes, size_t count);
+
+void cache_only(const node_entry_t *, size_t) {}
+
 void with_chip_stack(void (*fn)(const node_entry_t *, size_t), const node_entry_t *nodes, size_t count)
 {
+    // Snapshot every node before the Matter lock. A retry passes only the
+    // device it is starting, and caching that subset alone cleared the
+    // addresses used for the others' signal strength.
+    node_entry_t all[kMaxNodes];
+    size_t all_count = 0;
+    copy_nodes(all, all_count);
+
     using esp_matter::lock::status_t;
     status_t locked = esp_matter::lock::chip_stack_lock(portMAX_DELAY);
     if (locked == esp_matter::lock::FAILED) {
@@ -1864,6 +1898,9 @@ void with_chip_stack(void (*fn)(const node_entry_t *, size_t), const node_entry_
         return;
     }
     fn(nodes, count);
+    if (all_count > 0) {
+        cache_peer_ips(all, all_count);
+    }
     if (locked == esp_matter::lock::SUCCESS) {
         esp_matter::lock::chip_stack_unlock();
     }
@@ -1991,6 +2028,7 @@ void gateway_nodes_retry_watch(void)
     lock_registry();
     if (s_last_watch_us != 0 && now - s_last_watch_us < kStaggerUs) {
         unlock_registry();
+        with_chip_stack(cache_only, nodes, count);
         return;
     }
     for (size_t i = 0; i < count; ++i) {
@@ -2021,6 +2059,7 @@ void gateway_nodes_retry_watch(void)
         return;
     }
     if (inflight >= kMaxInflight || best < 0) {
+        with_chip_stack(cache_only, nodes, count);
         return;
     }
     node_entry_t one = nodes[best];
@@ -2357,6 +2396,117 @@ esp_err_t gateway_nodes_set_fan(uint64_t node_id, bool on)
     return mode == ESP_OK ? mode : power;
 }
 
+constexpr int kRssiInvalid = 127;
+
+static bool same_ip(const otIp6Address &a, const otIp6Address &b)
+{
+    return memcmp(a.mFields.m8, b.mFields.m8, sizeof(a.mFields.m8)) == 0;
+}
+
+static int pick_rssi(int8_t last, int8_t average)
+{
+    if (last != kRssiInvalid) {
+        return last;
+    }
+    if (average != kRssiInvalid) {
+        return average;
+    }
+    return kRssiInvalid;
+}
+
+static int thread_rssi_for_ip(otInstance *instance, const otIp6Address &peer)
+{
+    uint16_t max_children = otThreadGetMaxAllowedChildren(instance);
+    if (max_children > 32) {
+        max_children = 32;
+    }
+    for (uint16_t i = 0; i < max_children; ++i) {
+        otChildInfo child;
+        if (otThreadGetChildInfoByIndex(instance, i, &child) != OT_ERROR_NONE) {
+            continue;
+        }
+        otChildIp6AddressIterator it = OT_CHILD_IP6_ADDRESS_ITERATOR_INIT;
+        otIp6Address addr;
+        while (otThreadGetChildNextIp6Address(instance, i, &it, &addr) == OT_ERROR_NONE) {
+            if (same_ip(addr, peer)) {
+                return pick_rssi(child.mLastRssi, child.mAverageRssi);
+            }
+        }
+    }
+
+    uint16_t rloc = 0;
+    bool have_rloc = false;
+    otCacheEntryIterator cache_it;
+    memset(&cache_it, 0, sizeof(cache_it));
+    otCacheEntryInfo cache;
+    while (otThreadGetNextCacheEntry(instance, &cache, &cache_it) == OT_ERROR_NONE) {
+        if (same_ip(cache.mTarget, peer) || (cache.mValidLastTrans && same_ip(cache.mMeshLocalEid, peer))) {
+            rloc = cache.mRloc16;
+            have_rloc = true;
+            break;
+        }
+    }
+
+    otNeighborInfoIterator nit = OT_NEIGHBOR_INFO_ITERATOR_INIT;
+    otNeighborInfo info;
+    while (otThreadGetNextNeighborInfo(instance, &nit, &info) == OT_ERROR_NONE) {
+        bool match = have_rloc && info.mRloc16 == rloc;
+        if (!match) {
+            uint8_t iid[8];
+            memcpy(iid, info.mExtAddress.m8, sizeof(iid));
+            iid[0] ^= 0x02;
+            match = memcmp(peer.mFields.m8 + 8, iid, sizeof(iid)) == 0;
+        }
+        if (match) {
+            return pick_rssi(info.mLastRssi, info.mAverageRssi);
+        }
+    }
+    return kRssiInvalid;
+}
+
+static bool peer_ip_for_node(uint64_t node_id, otIp6Address &out)
+{
+    auto *commissioner = esp_matter::controller::matter_controller_client::get_instance().get_commissioner();
+    if (!commissioner || commissioner->SessionMgr() == nullptr) {
+        return false;
+    }
+    const chip::FabricIndex fabric = commissioner->GetFabricIndex();
+    auto found = commissioner->SessionMgr()->FindSecureSessionForNode(chip::ScopedNodeId(node_id, fabric));
+    if (!found.HasValue()) {
+        return false;
+    }
+    chip::Transport::SecureSession *secure = found.Value()->AsSecureSession();
+    if (secure == nullptr) {
+        return false;
+    }
+    const chip::Transport::PeerAddress &addr = secure->GetPeerAddress();
+    if (addr.GetTransportType() != chip::Transport::Type::kUdp || !addr.GetIPAddress().IsIPv6()) {
+        return false;
+    }
+    /* Addr[] is stored in wire order. Copying the bytes matches otIp6Address. */
+    memcpy(out.mFields.m8, addr.GetIPAddress().Addr, sizeof(out.mFields.m8));
+    return true;
+}
+
+static void cache_peer_ips(const node_entry_t *nodes, size_t count)
+{
+    peer_slot_t fresh[kMaxNodes] = {};
+    if (count > kMaxNodes) {
+        count = kMaxNodes;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        fresh[i].node_id = nodes[i].node_id;
+        fresh[i].have = peer_ip_for_node(nodes[i].node_id, fresh[i].ip);
+    }
+    if (s_peer_lock) {
+        xSemaphoreTake(s_peer_lock, portMAX_DELAY);
+    }
+    memcpy(s_peers, fresh, sizeof(s_peers));
+    if (s_peer_lock) {
+        xSemaphoreGive(s_peer_lock);
+    }
+}
+
 esp_err_t gateway_nodes_write_json(char *out, size_t out_len)
 {
     if (!out || out_len < 3) {
@@ -2368,6 +2518,38 @@ esp_err_t gateway_nodes_write_json(char *out, size_t out_len)
         return ESP_ERR_NO_MEM;
     }
     used = static_cast<size_t>(wrote);
+
+    uint64_t ids[kMaxNodes];
+    int rssi_by_id[kMaxNodes];
+    peer_slot_t peers[kMaxNodes];
+    size_t id_count = 0;
+    lock_registry();
+    id_count = s_registry.count;
+    if (id_count > kMaxNodes) {
+        id_count = kMaxNodes;
+    }
+    for (size_t i = 0; i < id_count; ++i) {
+        ids[i] = s_registry.entries[i].node_id;
+        rssi_by_id[i] = kRssiInvalid;
+    }
+    unlock_registry();
+    memset(peers, 0, sizeof(peers));
+    if (s_peer_lock && xSemaphoreTake(s_peer_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+        memcpy(peers, s_peers, sizeof(peers));
+        xSemaphoreGive(s_peer_lock);
+    }
+    otInstance *instance = esp_openthread_get_instance();
+    if (instance != nullptr && esp_openthread_lock_acquire(pdMS_TO_TICKS(40))) {
+        for (size_t i = 0; i < id_count; ++i) {
+            for (size_t n = 0; n < kMaxNodes; ++n) {
+                if (peers[n].have && peers[n].node_id == ids[i]) {
+                    rssi_by_id[i] = thread_rssi_for_ip(instance, peers[n].ip);
+                    break;
+                }
+            }
+        }
+        esp_openthread_lock_release();
+    }
 
     lock_registry();
     for (size_t i = 0; i < s_registry.count; ++i) {
@@ -2404,12 +2586,25 @@ esp_err_t gateway_nodes_write_json(char *out, size_t out_len)
                 buttons[bu] = 0;
             }
         }
+        int rssi = kRssiInvalid;
+        for (size_t n = 0; n < id_count; ++n) {
+            if (ids[n] == entry.node_id) {
+                rssi = rssi_by_id[n];
+                break;
+            }
+        }
+        char rssi_num[8];
+        const char *rssi_json = "null";
+        if (rssi != kRssiInvalid) {
+            snprintf(rssi_num, sizeof(rssi_num), "%d", rssi);
+            rssi_json = rssi_num;
+        }
         wrote = snprintf(out + used, out_len - used,
                          "%s{\"node_id\":%" PRIu64 ",\"endpoint\":%u,"
                          "\"kind\":\"%s\",\"name\":\"%s\",\"state\":\"%s\","
-                         "\"battery\":%d,\"temp_c\":%.1f,\"humidity\":%.0f%s}",
+                         "\"battery\":%d,\"temp_c\":%.1f,\"humidity\":%.0f,\"rssi\":%s%s}",
                          i ? "," : "", entry.node_id, entry.endpoint_id,
-                         kind_name(entry.kind), name, state, battery, temp_c, humidity, buttons);
+                         kind_name(entry.kind), name, state, battery, temp_c, humidity, rssi_json, buttons);
         if (wrote < 0 || static_cast<size_t>(wrote) >= out_len - used) {
             unlock_registry();
             return ESP_ERR_NO_MEM;

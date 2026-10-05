@@ -73,7 +73,24 @@ border-bottom:1px solid var(--line);cursor:pointer;border-radius:8px;transition:
 .device:hover{background:rgba(255,255,255,.03)}
 .device:last-child{border-bottom:0}
 .device .id{font-family:ui-monospace,Menlo,monospace;font-size:.8rem}
-.device .title{font-weight:650;font-size:.92rem;margin-bottom:.15rem;display:flex;align-items:center;gap:.45rem}
+.device .title{font-weight:650;font-size:.92rem;margin-bottom:.15rem;display:flex;align-items:center;gap:.45rem;width:100%}
+.device .title-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wifi-wrap{margin-left:auto;display:inline-flex;align-items:center;gap:.35rem;color:var(--muted);font-size:.7rem;
+font-family:ui-monospace,Menlo,monospace;font-weight:550;flex:0 0 auto}
+.wifi{position:relative;width:16px;height:12px;flex:0 0 auto;overflow:hidden}
+.wifi i,.wifi b{position:absolute;left:50%;transform:translateX(-50%);box-sizing:border-box}
+.wifi i{border:1.6px solid transparent;border-top-color:rgba(139,155,180,.32);border-radius:50%}
+.wifi i:nth-child(1){width:16px;height:16px;top:-1px}
+.wifi i:nth-child(2){width:11px;height:11px;top:2px}
+.wifi i:nth-child(3){width:6px;height:6px;top:5px}
+.wifi b{width:2.5px;height:2.5px;border-radius:50%;background:rgba(139,155,180,.32);bottom:0}
+.wifi[data-lvl="4"] i{border-top-color:var(--accent)}
+.wifi[data-lvl="4"] b{background:var(--accent)}
+.wifi[data-lvl="3"] i:nth-child(n+2){border-top-color:var(--accent)}
+.wifi[data-lvl="3"] b{background:var(--accent)}
+.wifi[data-lvl="2"] i:nth-child(3){border-top-color:var(--accent)}
+.wifi[data-lvl="2"] b{background:var(--accent)}
+.wifi[data-lvl="1"] b{background:var(--warn)}
 .device .meta{color:var(--muted);font-size:.76rem;margin-top:.12rem}
 .device .kind{color:var(--text);font-size:.78rem;margin-top:.2rem;font-weight:550}
 .btn-row{display:grid;grid-template-columns:1fr 9.5rem;gap:.4rem;margin:.35rem 0}
@@ -333,6 +350,7 @@ function openModal(id,soft){
  kv($('#mdKv'),[
   ['Type',esc(n.kind)],['State',esc(n.state||'waiting')],
   ['Node',esc(n.node_id)],['Endpoint',esc(n.endpoint)],
+  ['Signal',signalHtml(n.rssi)],
   ['Battery',n.battery>=0?esc(n.battery)+' %':null],
   ['Temperature',(n.temp_c!=null&&n.temp_c>-100)?Number(n.temp_c).toFixed(1)+' °C':null],
   ['Humidity',(n.humidity!=null&&n.humidity>=0)?Number(n.humidity).toFixed(0)+' %':null],
@@ -423,6 +441,12 @@ function kindLabel(n){
  if(k==='thermostat')return 'Thermostat';
  return k||'Device';
 }
+function signalHtml(rssi){
+ const known=rssi!=null&&rssi!==''&&Number.isFinite(Number(rssi))&&Number(rssi)<127;
+ const r=known?Number(rssi):null;
+ const lvl=r==null?0:(r>=-50?4:r>=-65?3:r>=-78?2:r>=-90?1:1);
+ return '<span class="wifi-wrap" title="'+(r==null?'No signal yet':(r+' dBm'))+'"><span class="wifi" data-lvl="'+lvl+'" aria-hidden="true"><i></i><i></i><i></i><b></b></span>'+(r==null?'':'<span>'+r+' dBm</span>')+'</span>';
+}
 function deviceChips(n){
  const chips=[];
  const k=n.kind;
@@ -481,7 +505,7 @@ function fill(st){
     :'The ICC RCP is not attached yet.';
   const list=$('#devList');
   if(!nodes.length){list.innerHTML='<div class="empty"><strong>No sensors yet</strong>Pair a factory-reset IKEA sensor with its MT: code.</div>'}
-  else list.innerHTML=nodes.map(n=>'<div class="device" data-id="'+esc(n.node_id)+'"><div style="min-width:0;flex:1"><div class="title"><span class="title-text">'+esc(n.name)+'</span></div>'
+  else list.innerHTML=nodes.map(n=>'<div class="device" data-id="'+esc(n.node_id)+'"><div style="min-width:0;flex:1"><div class="title"><span class="title-text">'+esc(n.name)+'</span>'+signalHtml(n.rssi)+'</div>'
     +'<div class="id">node '+esc(n.node_id)+'</div>'
     +'<div class="kind">'+esc(kindLabel(n))+'</div>'
     +'<div class="meta">endpoint '+esc(n.endpoint)+'</div>'
