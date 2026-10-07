@@ -1,0 +1,267 @@
+name: OTA publish
+
+# Build firmware and publish raw artifacts for the portal:
+#   main  → branch ota          (Stable)
+#   dev   → branch ota-nightly  (Nightly)
+#
+# Manifest:
+#   https://raw.githubusercontent.com/ha0rex/esp32-icc1-thread-gw/ota/manifest.json
+#   https://raw.githubusercontent.com/ha0rex/esp32-icc1-thread-gw/ota-nightly/manifest.json
+
+on:
+  push:
+    branches: [main, dev]
+    paths-ignore:
+      - "README.md"
+      - ".cursor/**"
+      - ".gitignore"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout HomeKit components
+        uses: actions/checkout@v4
+        with:
+          repository: ha0rex/esp32-icc1-zigbee-gw
+          ref: dev
+          path: zigbee-gw
+
+      - name: Channel
+        id: ch
+        run: |
+          REF="${GITHUB_REF_NAME}"
+          if [ "$REF" = "main" ]; then
+            echo "branch=ota" >> "$GITHUB_OUTPUT"
+            echo "label=Stable" >> "$GITHUB_OUTPUT"
+            echo "tag=ota" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=ota-nightly" >> "$GITHUB_OUTPUT"
+            echo "label=Nightly" >> "$GITHUB_OUTPUT"
+            echo "tag=ota-nightly" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Version stamp
+        id: ver
+        run: |
+          BASE=$(grep -E 'set\(PROJECT_VER' CMakeLists.txt | sed -E 's/.*"([^"]+)".*/\1/')
+          SHA=$(git rev-parse --short=8 HEAD)
+          DAY=$(date -u +%Y%m%d)
+          VER="${BASE}-${DAY}.${SHA}"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "OTA version: $VER (${{ steps.ch.outputs.label }})"
+          sed -i -E "s/set\(PROJECT_VER \"[^\"]+\"\)/set(PROJECT_VER \"$VER\")/" CMakeLists.txt
+
+      - name: Cache ESP-IDF and ESP-Matter
+        uses: actions/cache@v4
+        id: sdk
+        with:
+          path: |
+            /home/runner/esp/esp-idf
+            /home/runner/esp/esp-matter
+            /home/runner/.espressif
+          key: thread-gw-idf-5.4.1-matter-1.4
+
+      - name: Install ESP-IDF and ESP-Matter
+        run: |
+          set -euo pipefail
+          ln -sfn "$GITHUB_WORKSPACE/zigbee-gw" "$GITHUB_WORKSPACE/../esp32-icc1-zigbee-gw"
+          mkdir -p "$HOME/esp"
+          if [ ! -d "$HOME/esp/esp-idf/.git" ]; then
+            git clone --branch v5.4.1 --depth 1 https://github.com/espressif/esp-idf.git "$HOME/esp/esp-idf"
+          fi
+          git -C "$HOME/esp/esp-idf" submodule update --init --recursive --depth 1
+          "$HOME/esp/esp-idf/install.sh" esp32s3
+          if [ ! -d "$HOME/esp/esp-matter/.git" ]; then
+            git clone --branch release/v1.4 --depth 1 https://github.com/espressif/esp-matter.git "$HOME/esp/esp-matter"
+          fi
+          git -C "$HOME/esp/esp-matter" submodule update --init --depth 1
+          # shellcheck disable=SC1091
+          source "$HOME/esp/esp-idf/export.sh"
+          python3 "$HOME/esp/esp-matter/connectedhomeip/connectedhomeip/scripts/checkout_submodules.py" \
+            --platform esp32 linux --shallow
+          (cd "$HOME/esp/esp-matter" && ./install.sh --no-host-tool)
+
+      - name: Attestation certificates
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source "$HOME/esp/esp-idf/export.sh"
+          mkdir -p paa_cert
+          python3 "$HOME/esp/esp-matter/connectedhomeip/connectedhomeip/credentials/fetch_paa_certs_from_dcl.py" \
+            --use-main-net-http --paa-trust-store-path paa_cert
+          rm -f paa_cert/*.pem
+          for cert in paa_cert/*.der; do
+            [ -e "$cert" ] || continue
+            digest=$(sha256sum "$cert" | awk '{print substr($1, 1, 20)}')
+            short="paa_cert/${digest}.der"
+            if [ "$cert" != "$short" ]; then
+              mv -f "$cert" "$short"
+            fi
+          done
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          ln -sfn "$GITHUB_WORKSPACE/zigbee-gw" "$GITHUB_WORKSPACE/../esp32-icc1-zigbee-gw"
+          # shellcheck disable=SC1091
+          source "$HOME/esp/esp-idf/export.sh"
+          source "$HOME/esp/esp-matter/export.sh"
+          export ESP_MATTER_PATH="$HOME/esp/esp-matter"
+          idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" set-target esp32s3
+          idf.py build
+
+      - name: Package artifact
+        run: |
+          set -e
+          mkdir -p dist
+          BIN=build/esp32_icc1_thread_gw.bin
+          test -f "$BIN"
+          cp "$BIN" dist/esp32_icc1_thread_gw-esp32s3.bin
+          cp "$BIN" dist/esp32_icc1_thread_gw.bin
+          sha256sum "$BIN" | awk '{print $1}' > dist/esp32_icc1_thread_gw-esp32s3.sha256
+          echo "${{ steps.ver.outputs.version }}" > dist/version.txt
+          echo "${{ steps.ch.outputs.branch }}" > dist/ota_branch.txt
+          echo "${{ steps.ch.outputs.label }}" > dist/ota_label.txt
+          echo "${{ steps.ch.outputs.tag }}" > dist/ota_tag.txt
+          echo "${{ steps.ch.outputs.prerelease }}" > dist/ota_prerelease.txt
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: fw-esp32s3
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: fw-esp32s3
+          path: dist
+
+      - name: Assemble manifest
+        run: |
+          set -euo pipefail
+          VER=$(cat dist/version.txt)
+          OTA_BRANCH=$(cat dist/ota_branch.txt)
+          SHA_S3=$(cat dist/esp32_icc1_thread_gw-esp32s3.sha256)
+          echo "version=$VER" >> "$GITHUB_ENV"
+          echo "ota_branch=$OTA_BRANCH" >> "$GITHUB_ENV"
+          echo "ota_label=$(cat dist/ota_label.txt)" >> "$GITHUB_ENV"
+          echo "ota_tag=$(cat dist/ota_tag.txt)" >> "$GITHUB_ENV"
+          echo "ota_prerelease=$(cat dist/ota_prerelease.txt)" >> "$GITHUB_ENV"
+
+          PREV=""
+          if git fetch --depth=1 origin "$OTA_BRANCH" 2>/dev/null; then
+            PREV=$(git show "origin/${OTA_BRANCH}:manifest.json" 2>/dev/null \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit") or "")' || true)
+          fi
+          if [ -n "$PREV" ] && git cat-file -e "${PREV}^{commit}" 2>/dev/null; then
+            git log --no-merges --pretty=format:'%h%x09%s' "${PREV}..HEAD" > /tmp/ota_changelog.txt || true
+          else
+            git log --no-merges -12 --pretty=format:'%h%x09%s' > /tmp/ota_changelog.txt || true
+          fi
+          head -n 25 /tmp/ota_changelog.txt > /tmp/ota_changelog_trim.txt || true
+          mv /tmp/ota_changelog_trim.txt /tmp/ota_changelog.txt
+
+          VER="$VER" OTA_BRANCH="$OTA_BRANCH" SHA_S3="$SHA_S3" python3 - <<'PY'
+          import json, os, subprocess, datetime, pathlib
+          ver = os.environ["VER"]
+          ota_branch = os.environ["OTA_BRANCH"]
+          sha_s3 = os.environ["SHA_S3"]
+          raw = f"https://raw.githubusercontent.com/ha0rex/esp32-icc1-thread-gw/{ota_branch}"
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          changelog = []
+          log_path = pathlib.Path("/tmp/ota_changelog.txt")
+          if log_path.is_file():
+              for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                  line = line.strip()
+                  if not line:
+                      continue
+                  if "\t" in line:
+                      short, msg = line.split("\t", 1)
+                  else:
+                      parts = line.split(" ", 1)
+                      short, msg = parts[0], parts[1] if len(parts) > 1 else ""
+                  msg = msg.strip()
+                  if msg:
+                      changelog.append({"sha": short.strip(), "message": msg})
+          url = f"{raw}/esp32_icc1_thread_gw-esp32s3.bin"
+          manifest = {
+              "version": ver,
+              "url": url,
+              "sha256": sha_s3,
+              "targets": {
+                  "esp32s3": {"url": url, "sha256": sha_s3},
+              },
+              "channel": ota_branch,
+              "built": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "commit": commit,
+              "changelog": changelog,
+          }
+          pathlib.Path("dist/manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Publish OTA branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          OTA_BRANCH="${{ env.ota_branch }}"
+          WORK=$(mktemp -d)
+          cp dist/esp32_icc1_thread_gw.bin \
+             dist/esp32_icc1_thread_gw-esp32s3.bin \
+             dist/manifest.json "$WORK/"
+          cd "$WORK"
+          git init
+          git checkout -b "$OTA_BRANCH"
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .
+          git commit -m "OTA ${{ env.version }} (${{ env.ota_label }})"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/ha0rex/esp32-icc1-thread-gw.git"
+          git push -f origin "$OTA_BRANCH"
+
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.ota_tag }}
+          name: ${{ env.ota_label }} firmware
+          prerelease: ${{ env.ota_prerelease }}
+          make_latest: ${{ env.ota_tag == 'ota' }}
+          generate_release_notes: false
+          body: |
+            Rolling **${{ env.ota_label }}** channel from `${{ github.ref_name }}`.
+            Version: `${{ env.version }}`
+
+            Binary: `esp32s3`.
+
+            Manifest:
+            `https://raw.githubusercontent.com/ha0rex/esp32-icc1-thread-gw/${{ env.ota_branch }}/manifest.json`
+          files: |
+            dist/esp32_icc1_thread_gw.bin
+            dist/esp32_icc1_thread_gw-esp32s3.bin
+            dist/manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

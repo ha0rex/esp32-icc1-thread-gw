@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "boot_log.h"
+#include "fw_ota.h"
 #include "esp_app_desc.h"
 #include "esp_attr.h"
 #include "esp_check.h"
@@ -832,6 +833,127 @@ extern "C" esp_err_t portal_peer_command_post(httpd_req_t *req)
     return peer_result(req, peer_link_set_remote(id, on), "The other gateway did not accept the command");
 }
 
+extern "C" esp_err_t portal_ota_get(httpd_req_t *req)
+{
+    fw_ota_status_t st;
+    fw_ota_get_status(&st);
+    char msg[128], run[64], av[64], url[280], man[280];
+    json_escape(st.message, msg, sizeof(msg));
+    json_escape(st.running_version, run, sizeof(run));
+    json_escape(st.available_version, av, sizeof(av));
+    json_escape(st.firmware_url, url, sizeof(url));
+    json_escape(st.manifest_url, man, sizeof(man));
+    char body[1200];
+    snprintf(body, sizeof(body),
+             "{\"ok\":true,\"state\":\"%s\",\"channel\":\"%s\",\"channel_label\":\"%s\","
+             "\"running\":\"%s\",\"available\":\"%s\",\"url\":\"%s\",\"manifest_url\":\"%s\","
+             "\"update_available\":%s,\"progress\":%d,\"message\":\"%s\"}",
+             fw_ota_state_str(st.state), fw_ota_channel_str(st.channel),
+             fw_ota_channel_label(st.channel), run, av, url, man,
+             st.update_available ? "true" : "false", st.progress_pct, msg);
+    return send_json(req, body);
+}
+
+extern "C" esp_err_t portal_ota_channel_post(httpd_req_t *req)
+{
+    char body[160];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_error(req, "Request is too large");
+    }
+    char channel[24] = "";
+    json_find_string(body, "channel", channel, sizeof(channel));
+    fw_ota_channel_t ch = FW_OTA_CHANNEL_STABLE;
+    if (strcmp(channel, "nightly") == 0) {
+        ch = FW_OTA_CHANNEL_NIGHTLY;
+    } else if (channel[0] && strcmp(channel, "stable") != 0) {
+        return send_error(req, "Channel must be stable or nightly");
+    }
+    esp_err_t err = fw_ota_set_channel(ch);
+    if (err != ESP_OK) {
+        return send_error(req, "Could not save the update channel");
+    }
+    fw_ota_status_t st;
+    fw_ota_get_status(&st);
+    char msg[128], man[280];
+    json_escape(st.message, msg, sizeof(msg));
+    json_escape(st.manifest_url, man, sizeof(man));
+    char resp[640];
+    snprintf(resp, sizeof(resp),
+             "{\"ok\":true,\"channel\":\"%s\",\"channel_label\":\"%s\",\"manifest_url\":\"%s\","
+             "\"message\":\"%s\"}",
+             fw_ota_channel_str(st.channel), fw_ota_channel_label(st.channel), man, msg);
+    return send_json(req, resp);
+}
+
+extern "C" esp_err_t portal_ota_offer_post(httpd_req_t *req)
+{
+    char body[512];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_error(req, "Request is too large");
+    }
+    char version[48] = "";
+    char url[256] = "";
+    json_find_string(body, "version", version, sizeof(version));
+    json_find_string(body, "url", url, sizeof(url));
+    esp_err_t err = fw_ota_offer(version, url);
+    if (err != ESP_OK) {
+        return send_error(req, "Version and firmware URL are required");
+    }
+    fw_ota_status_t st;
+    fw_ota_get_status(&st);
+    char msg[128], run[64], av[64];
+    json_escape(st.message, msg, sizeof(msg));
+    json_escape(st.running_version, run, sizeof(run));
+    json_escape(st.available_version, av, sizeof(av));
+    char resp[480];
+    snprintf(resp, sizeof(resp),
+             "{\"ok\":true,\"state\":\"%s\",\"running\":\"%s\",\"available\":\"%s\","
+             "\"update_available\":%s,\"message\":\"%s\"}",
+             fw_ota_state_str(st.state), run, av, st.update_available ? "true" : "false", msg);
+    return send_json(req, resp);
+}
+
+extern "C" esp_err_t portal_ota_upload_post(httpd_req_t *req)
+{
+    int total = req->content_len;
+    if (total <= 0) {
+        return send_error(req, "Empty firmware image");
+    }
+    esp_err_t err = fw_ota_upload_begin(static_cast<size_t>(total));
+    if (err != ESP_OK) {
+        fw_ota_status_t st;
+        fw_ota_get_status(&st);
+        return send_error(req, st.message[0] ? st.message : "Could not start the update");
+    }
+
+    char buf[1024];
+    int remaining = total;
+    while (remaining > 0) {
+        int n = remaining > static_cast<int>(sizeof(buf)) ? static_cast<int>(sizeof(buf)) : remaining;
+        int r = httpd_req_recv(req, buf, n);
+        if (r <= 0) {
+            fw_ota_upload_abort();
+            return send_error(req, "Firmware upload stopped");
+        }
+        err = fw_ota_upload_write(buf, static_cast<size_t>(r));
+        if (err != ESP_OK) {
+            return send_error(req, "Could not write the firmware image");
+        }
+        remaining -= r;
+    }
+
+    err = fw_ota_upload_finish();
+    if (err != ESP_OK) {
+        fw_ota_status_t st;
+        fw_ota_get_status(&st);
+        return send_error(req, st.message[0] ? st.message : "Could not finish the update");
+    }
+    esp_err_t send_err = send_json(req, "{\"ok\":true,\"rebooting\":true,\"message\":\"Update OK — rebooting\"}");
+    vTaskDelay(pdMS_TO_TICKS(400));
+    esp_restart();
+    return send_err;
+}
+
 extern "C" esp_err_t portal_homekit_reset_post(httpd_req_t *req)
 {
     esp_err_t err = homekit_bridge_reset_pairings();
@@ -853,7 +975,7 @@ esp_err_t portal_start(void)
     cfg.server_port = 80;
     /* 16384 does not fit in internal RAM (httpd_start returns ESP_ERR_HTTPD_TASK). */
     cfg.stack_size = 12288;
-    cfg.max_uri_handlers = 28;
+    cfg.max_uri_handlers = 32;
     cfg.lru_purge_enable = true;
     cfg.recv_wait_timeout = 15;
     cfg.send_wait_timeout = 15;
@@ -876,6 +998,10 @@ esp_err_t portal_start(void)
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = portal_wifi_scan_get},
         {.uri = "/api/wifi/sta", .method = HTTP_POST, .handler = portal_wifi_post},
         {.uri = "/api/homekit/reset", .method = HTTP_POST, .handler = portal_homekit_reset_post},
+        {.uri = "/api/ota", .method = HTTP_GET, .handler = portal_ota_get},
+        {.uri = "/api/ota/channel", .method = HTTP_POST, .handler = portal_ota_channel_post},
+        {.uri = "/api/ota/offer", .method = HTTP_POST, .handler = portal_ota_offer_post},
+        {.uri = "/api/ota/upload", .method = HTTP_POST, .handler = portal_ota_upload_post},
         {.uri = "/api/peer", .method = HTTP_GET, .handler = portal_peer_get},
         {.uri = "/api/peer/devices", .method = HTTP_GET, .handler = portal_peer_devices_get},
         {.uri = "/api/peer/discover", .method = HTTP_POST, .handler = portal_peer_discover_post},

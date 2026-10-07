@@ -60,6 +60,45 @@ background:linear-gradient(135deg,var(--accent),#149e90);color:#041512;margin-to
 .btn.danger{background:linear-gradient(135deg,#ff6b6b,#d94848);color:#fff}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn.sm{width:auto;margin:0;padding:.42rem .7rem;font-size:.78rem}
+.btn.busy:disabled{cursor:wait;opacity:.7}
+.btn .spin{width:.85rem;height:.85rem;border:2px solid currentColor;border-right-color:transparent;
+border-radius:50%;display:none;animation:spin .7s linear infinite}
+.btn.busy .spin{display:inline-block}.btn.busy .label{opacity:.9}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toolbar{display:flex;flex-wrap:wrap;gap:.55rem;align-items:center;margin:0 0 1rem}
+.toolbar .btn{margin:0;width:auto;min-width:0;flex:0 0 auto}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem;margin-bottom:.85rem}
+.card-head h2{margin:0}
+.card-lead{margin:.2rem 0 0;color:var(--muted);font-size:.8rem;line-height:1.45;font-weight:500}
+.progress{height:3px;background:#1a2438;border-radius:99px;overflow:hidden;margin-top:.65rem}
+.progress>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));
+transition:width .3s ease}
+.ota-hero{display:grid;grid-template-columns:1fr;gap:.75rem;margin:1rem 0 .85rem}
+@media(min-width:560px){.ota-hero{grid-template-columns:1fr 1fr}}
+.ota-ver{padding:.85rem .95rem;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.18)}
+.ota-ver.avail{border-color:rgba(30,200,165,.35);background:rgba(30,200,165,.07)}
+.ota-ver-label{display:block;font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;
+color:var(--muted);font-weight:700;margin:0 0 .35rem}
+.ota-ver-value{display:block;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.05rem;
+font-weight:650;letter-spacing:-.02em;line-height:1.25;word-break:break-all}
+.ota-ver.avail .ota-ver-value{color:var(--accent)}
+.ota-meta{display:flex;flex-wrap:wrap;gap:.35rem .85rem;align-items:baseline;
+padding:.15rem 0 .9rem;border-bottom:1px solid var(--line);margin:0 0 1rem;font-size:.78rem;color:var(--muted)}
+.ota-actions{display:flex;flex-wrap:wrap;gap:.55rem;margin:0}
+.ota-actions .btn{margin:0;flex:1 1 9.5rem;width:auto;min-width:0}
+.ota-status{min-height:1.2rem;margin:.75rem 0 0;font-size:.8rem;line-height:1.4;color:var(--muted)}
+.ota-status.active{color:#baf7e8}.ota-status.warn{color:#ffe6a8}.ota-status.err{color:#ffb4b4}
+.ota-progress{margin-top:.75rem}.ota-progress.hidden{display:none}
+.ota-changelog{margin-top:.95rem;padding-top:.85rem;border-top:1px solid var(--line)}
+.ota-changelog.hidden{display:none}
+.ota-changelog h3{margin:0 0 .55rem;font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;
+color:var(--muted);font-weight:700}
+.ota-changelog ul{margin:0;padding:0;list-style:none;display:grid;gap:.45rem;max-height:14rem;overflow:auto}
+.ota-changelog li{font-size:.82rem;line-height:1.35;color:var(--text);
+padding:.45rem .55rem;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid var(--line)}
+.ota-changelog code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.72rem;color:var(--accent);margin-right:.45rem}
+.pair-modal{width:min(440px,100%)}
+.pair-modal .modal-body{display:block}
 .hint{color:var(--muted);font-size:.78rem;margin:.5rem 0 0;line-height:1.45}
 .banner{padding:.8rem .95rem;border-radius:10px;border:1px solid var(--line);background:rgba(61,139,253,.08);
 color:#cfe0ff;margin-bottom:.9rem;font-size:.88rem;line-height:1.4}
@@ -193,47 +232,14 @@ footer{color:#66748c;text-align:center;font-size:.7rem;padding:0 1rem 1.75rem}
 </div>
 </section>
 <section id="view-devices" class="grid hidden">
-<div class="card"><h2>Pair a device</h2>
-<label for="mt">Matter setup code</label>
-<input id="mt" autocomplete="off" autocapitalize="none" placeholder="MT:…">
-<div class="row">
-<div><label for="kind">Type</label>
-<select id="kind">
-<optgroup label="Sensors">
-<option value="contact">Contact / door / window</option>
-<option value="motion">Motion</option>
-<option value="occupancy">Occupancy</option>
-<option value="leak">Water leak</option>
-<option value="climate">Temperature / humidity</option>
-<option value="air">Air quality</option>
-<option value="illuminance">Light level</option>
-<option value="smoke">Smoke / CO</option>
-</optgroup>
-<optgroup label="Lights and power">
-<option value="onoff">On/off light</option>
-<option value="light">Dimmable light</option>
-<option value="light_ct">White spectrum light</option>
-<option value="light_color">Color light</option>
-<option value="plug">Plug / outlet</option>
-<option value="switch">Wall switch</option>
-<option value="fan">Fan</option>
-</optgroup>
-<optgroup label="Controls">
-<option value="button">Button / remote</option>
-<option value="shade">Blind / shade</option>
-<option value="lock">Door lock</option>
-<option value="thermostat">Thermostat</option>
-</optgroup>
-</select></div>
-<div><label for="dname">Name</label><input id="dname" maxlength="23" placeholder="kitchen"></div>
+<div class="card">
+<div class="card-head"><h2>Devices</h2></div>
+<div class="toolbar">
+<button type="button" class="btn" id="openPair"><span class="spin"></span><span class="label">Pair device</span></button>
 </div>
-<label for="ep">Endpoint</label>
-<input id="ep" value="1" inputmode="numeric">
-<button type="button" class="btn" id="pairBtn">Pair device</button>
-<p class="hint" id="pairMsg">Any Matter over Thread device. Factory-reset it so it advertises, then pair. IKEA, Eve, Aqara, Nanoleaf, and others use these types.</p>
+<div id="devList"></div>
+<p class="hint">Tap a device for details, rename, or remove.</p>
 </div>
-<div class="card"><h2>Devices</h2><div id="devList"></div>
-<p class="hint">Tap a device for details, rename, or remove.</p></div>
 </section>
 <section id="view-homekit" class="grid hidden">
 <div class="card hk-setup"><h2>Add to Home</h2>
@@ -271,6 +277,36 @@ footer{color:#66748c;text-align:center;font-size:.7rem;padding:0 1rem 1.75rem}
 <div class="card" id="peerCard"><h2>Gateway link</h2>
 <p class="hint">Link the Thread and Zigbee gateways on this network. Each can then use the other's devices. The other gateway has to accept the link.</p>
 <div id="peerBody"><p class="hint">Looking for a gateway…</p></div>
+</div>
+<div class="card">
+<div class="card-head">
+<div><h2>Firmware</h2>
+<p class="card-lead" id="otaLead">Pick a channel · browser fetches, gateway installs over LAN</p></div>
+<span id="otaBadge" class="pill">Idle</span>
+</div>
+<div class="ota-hero">
+<div class="ota-ver"><span class="ota-ver-label">Running</span>
+<span class="ota-ver-value" id="otaRunning">—</span></div>
+<div class="ota-ver avail hidden" id="otaAvailBox"><span class="ota-ver-label">Available</span>
+<span class="ota-ver-value" id="otaAvailable">—</span></div>
+</div>
+<div class="ota-meta">
+<label for="otaChannelSel" style="margin:0;display:inline">Update channel</label>
+<select id="otaChannelSel" style="width:auto;min-width:8.5rem;margin:0;padding:.35rem .55rem;font-size:.8rem">
+<option value="stable">Stable</option>
+<option value="nightly">Nightly</option>
+</select>
+</div>
+<div class="ota-actions">
+<button type="button" class="btn secondary" id="otaCheck"><span class="spin"></span><span class="label">Check for update</span></button>
+<button type="button" class="btn" id="otaUpgrade" disabled><span class="spin"></span><span class="label">Install update</span></button>
+</div>
+<div class="progress ota-progress hidden" id="otaProgress"><i id="otaBar"></i></div>
+<p class="ota-status" id="otaMsg"></p>
+<div class="ota-changelog hidden" id="otaChangelog">
+<h3>Changelog</h3>
+<ul id="otaChangelogList"></ul>
+</div>
 </div>
 <div class="card"><h2>Wi‑Fi</h2>
 <p class="hint" id="wifiNow">—</p>
@@ -319,6 +355,57 @@ footer{color:#66748c;text-align:center;font-size:.7rem;padding:0 1rem 1.75rem}
 <button type="button" class="btn danger" id="mdRemove">Remove</button>
 </div>
 <p class="hint">Remove drops it from this gateway and from Home. The sensor stays on the Thread fabric until you factory-reset it.</p>
+</div>
+</div></div>
+<div id="pairRoot" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+<div class="modal pair-modal">
+<div class="modal-head">
+<h3>Pair a device</h3>
+<p class="sub">Factory-reset it so it advertises, then pair.</p>
+</div>
+<div class="modal-body">
+<label for="mt">Matter setup code</label>
+<input id="mt" autocomplete="off" autocapitalize="none" placeholder="MT:…">
+<div class="row">
+<div><label for="kind">Type</label>
+<select id="kind">
+<optgroup label="Sensors">
+<option value="contact">Contact / door / window</option>
+<option value="motion">Motion</option>
+<option value="occupancy">Occupancy</option>
+<option value="leak">Water leak</option>
+<option value="climate">Temperature / humidity</option>
+<option value="air">Air quality</option>
+<option value="illuminance">Light level</option>
+<option value="smoke">Smoke / CO</option>
+</optgroup>
+<optgroup label="Lights and power">
+<option value="onoff">On/off light</option>
+<option value="light">Dimmable light</option>
+<option value="light_ct">White spectrum light</option>
+<option value="light_color">Color light</option>
+<option value="plug">Plug / outlet</option>
+<option value="switch">Wall switch</option>
+<option value="fan">Fan</option>
+</optgroup>
+<optgroup label="Controls">
+<option value="button">Button / remote</option>
+<option value="shade">Blind / shade</option>
+<option value="lock">Door lock</option>
+<option value="thermostat">Thermostat</option>
+</optgroup>
+</select></div>
+<div><label for="dname">Name</label><input id="dname" maxlength="23" placeholder="kitchen"></div>
+</div>
+<label for="ep">Endpoint</label>
+<input id="ep" value="1" inputmode="numeric">
+</div>
+<div class="modal-foot">
+<div class="modal-actions">
+<button type="button" class="btn" id="pairBtn"><span class="spin"></span><span class="label">Pair device</span></button>
+<button type="button" class="btn secondary" id="pairClose"><span class="label">Cancel</span></button>
+</div>
+<p class="hint" id="pairMsg">Any Matter over Thread device. IKEA, Eve, Aqara, Nanoleaf, and others use these types.</p>
 </div>
 </div></div>
 <script>
@@ -419,7 +506,7 @@ function showTab(name){document.querySelectorAll('main>section').forEach(s=>s.cl
 $('#view-'+name).classList.remove('hidden');
 document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
 if(name==='sniff')startSniff();else stopSniff();
-if(name==='system')loadPeer()}
+if(name==='system'){loadPeer();loadOta()}}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 function chip(text){return '<span class="chip">'+esc(text)+'</span>'}
 function prettyState(text){
@@ -536,7 +623,7 @@ $('#mdKind').innerHTML=$('#kind').innerHTML;
 $('#devList').onclick=ev=>{const row=ev.target.closest&&ev.target.closest('.device');if(row&&row.dataset.id)openModal(row.dataset.id,false)};
 $('#mdClose').onclick=closeModal;
 $('#modalRoot').onclick=ev=>{if(ev.target===$('#modalRoot'))closeModal()};
-document.addEventListener('keydown',ev=>{if(ev.key==='Escape')closeModal()});
+document.addEventListener('keydown',ev=>{if(ev.key==='Escape'){closePair();closeModal()}});
 $('#mdKind').onchange=()=>{const n=findNode(mdId);if(n)renderButtons(Object.assign({},n,{kind:$('#mdKind').value}),false)};
 $('#mdSave').onclick=async()=>{if(!mdId)return;const name=$('#mdName').value.trim();const kind=$('#mdKind').value;
   const buttons=[...document.querySelectorAll('#mdBtnList .btn-row')].map(row=>({
@@ -567,12 +654,16 @@ $('#mdRemove').onclick=async()=>{if(!mdId)return;
   try{await api('/api/nodes/forget',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({node_id:Number(mdId)})});toast('Removed','ok');closeModal();refresh()}catch(e){toast(e.message,'err')}
   $('#mdRemove').disabled=false};
+function openPair(){const root=$('#pairRoot');if(root)root.classList.remove('hidden')}
+function closePair(){const root=$('#pairRoot');if(root)root.classList.add('hidden')}
+$('#openPair').onclick=openPair;
+$('#pairClose').onclick=closePair;
+$('#pairRoot').onclick=ev=>{if(ev.target===$('#pairRoot'))closePair()};
 $('#pairBtn').onclick=async()=>{const payload=$('#mt').value.trim();if(!payload){toast('Enter the MT: code','err');return}
-  $('#pairBtn').disabled=true;
-  try{await api('/api/nodes/pair',{method:'POST',headers:{'Content-Type':'application/json'},
+  await withBtn($('#pairBtn'),'Pairing…','Pair device',async()=>{
+  await api('/api/nodes/pair',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({payload,kind:$('#kind').value,name:$('#dname').value.trim(),endpoint:Number($('#ep').value||1)})});
-    toast('Pairing started','ok');refresh()}catch(e){toast(e.message,'err')}
-  $('#pairBtn').disabled=false};
+  toast('Pairing started','ok');closePair();refresh()})};
 $('#scanBtn').onclick=async()=>{try{const j=await api('/api/wifi/scan');
   $('#apList').innerHTML=(j.aps||[]).map(a=>'<div class="ap-row"><div><div class="ap-ssid">'+esc(a.ssid)+'</div>'
     +'<div class="ap-detail">'+esc(a.bssid)+' · '+esc(a.rssi)+' dBm</div></div>'
@@ -632,7 +723,121 @@ $('#peerBody').onclick=async ev=>{
   else if(t.dataset&&t.dataset.peerId){await peerPost('/api/peer/command',{id:t.dataset.peerId,on:t.dataset.peerOn==='1'});await loadPeer()}
  }catch(e){toast(e.message,'err')}
 };
+let otaState=null, otaChangelog=[], otaChannelSaving=false;
+function setOtaMsg(text,kind){const el=$('#otaMsg');if(!el)return;el.textContent=text||'';
+ el.className='ota-status'+(kind?(' '+kind):'')}
+function pill(el,text,cls){if(!el)return;el.className='pill '+(cls||'');el.textContent=text}
+function updateOtaLead(ch){
+ const el=$('#otaLead');if(!el)return;
+ const nightly=(ch==='nightly');
+ el.innerHTML='Channel <strong>'+(nightly?'Nightly (dev)':'Stable (main)')+'</strong> · browser fetches, gateway installs over LAN'}
+function renderOtaChangelog(){
+ const box=$('#otaChangelog'), list=$('#otaChangelogList');
+ if(!box||!list)return;
+ const upd=!!(otaState&&otaState.update_available);
+ if(!upd||!otaChangelog.length){box.classList.add('hidden');list.innerHTML='';return}
+ box.classList.remove('hidden');
+ list.innerHTML=otaChangelog.map(e=>{
+  const msg=esc(typeof e==='string'?e:(e.message||e.subject||''));
+  const sha=esc((e&&(e.sha||e.commit))||'');
+  return '<li>'+(sha?'<code>'+sha+'</code>':'')+msg+'</li>'}).join('')}
+function renderOta(st){
+ if(st)otaState=st;
+ st=otaState;
+ const run=(st&&st.running)||(S&&S.fw_version)||'—';
+ const av=(st&&st.available)||'';
+ const state=(st&&st.state)||'idle';
+ const upd=!!(st&&st.update_available);
+ const ch=(st&&st.channel)||'stable';
+ $('#otaRunning').textContent=run;
+ updateOtaLead(ch);
+ const sel=$('#otaChannelSel');
+ if(sel&&!otaChannelSaving&&document.activeElement!==sel)sel.value=(ch==='nightly')?'nightly':'stable';
+ const box=$('#otaAvailBox');
+ if(upd&&av){box.classList.remove('hidden');$('#otaAvailable').textContent=av}
+ else box.classList.add('hidden');
+ const badge=$('#otaBadge');
+ if(state==='updating'||state==='rebooting')pill(badge,state==='rebooting'?'Rebooting':'Installing','warn');
+ else if(upd)pill(badge,'Update available','warn');
+ else if(state==='up_to_date')pill(badge,'Up to date','ok');
+ else if(state==='failed')pill(badge,'Failed','bad');
+ else pill(badge,'Idle','');
+ const btn=$('#otaUpgrade');if(btn&&!btn.classList.contains('busy'))btn.disabled=!upd;
+ if(st&&st.message)setOtaMsg(st.message,upd?'active':(state==='failed'?'err':''));
+ renderOtaChangelog()}
+async function loadOta(){
+ if(($('#otaCheck')&&$('#otaCheck').classList.contains('busy'))||($('#otaUpgrade')&&$('#otaUpgrade').classList.contains('busy')))return;
+ try{renderOta(await api('/api/ota'))}catch(e){}}
+async function withBtn(btn,busy,idle,fn){
+ if(!btn)return;
+ btn.classList.add('busy');btn.disabled=true;
+ const label=btn.querySelector('.label');
+ if(label)label.textContent=busy;
+ try{await fn()}catch(e){toast(e.message||String(e),'err')}
+ finally{btn.classList.remove('busy');if(label)label.textContent=idle;btn.disabled=false}}
+$('#otaChannelSel').onchange=async()=>{
+ const channel=$('#otaChannelSel').value||'stable';
+ otaChannelSaving=true;otaChangelog=[];
+ if(!otaState)otaState={};
+ otaState.channel=channel;
+ otaState.channel_label=(channel==='nightly')?'Nightly':'Stable';
+ otaState.update_available=false;otaState.available='';otaState.url='';otaState.state='idle';
+ otaState.message='Saving channel…';
+ renderOta(otaState);
+ try{
+  const j=await api('/api/ota/channel',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({channel})});
+  const st=await api('/api/ota');
+  renderOta(Object.assign({},st,{message:j.message||('Saved · '+(j.channel_label||channel))}));
+  toast((j.channel_label||channel)+' channel saved','ok')
+ }catch(e){toast(e.message||String(e),'err');try{renderOta(await api('/api/ota'))}catch(_){}}
+ finally{otaChannelSaving=false}};
+$('#otaCheck').onclick=async()=>{
+ await withBtn($('#otaCheck'),'Checking…','Check for update',async()=>{
+  let st=await api('/api/ota');
+  const channel=($('#otaChannelSel')&&$('#otaChannelSel').value)||st.channel||'stable';
+  const MANIFEST=st.manifest_url||('https://raw.githubusercontent.com/ha0rex/esp32-icc1-thread-gw/'
+   +(channel==='nightly'?'ota-nightly':'ota')+'/manifest.json');
+  pill($('#otaBadge'),'Checking…','warn');
+  setOtaMsg('Fetching '+(channel==='nightly'?'Nightly':'Stable')+' manifest…','active');
+  const m=await fetch(MANIFEST,{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('Manifest HTTP '+r.status);return r.json()});
+  if(!m||!m.version)throw new Error('Invalid manifest');
+  const chip=(S&&S.board&&S.board.chip)||'esp32s3';
+  const tgt=(m.targets&&m.targets[chip])||null;
+  const fwUrl=(tgt&&tgt.url)||m.url;
+  if(!fwUrl)throw new Error('No firmware URL for '+chip+' in manifest');
+  otaChangelog=Array.isArray(m.changelog)?m.changelog:(Array.isArray(m.changes)?m.changes:[]);
+  const j=await api('/api/ota/offer',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({version:m.version,url:fwUrl})});
+  renderOta(Object.assign({},j,{channel,channel_label:(channel==='nightly'?'Nightly':'Stable'),manifest_url:MANIFEST}));
+  if(j.state==='failed')throw new Error(j.message||'OTA check failed');
+  toast(j.update_available?('Update '+j.available+' available'):(j.message||'Up to date'),'ok')
+ })};
+$('#otaUpgrade').onclick=async()=>{
+ if(!confirm('Install firmware update and reboot the gateway?'))return;
+ await withBtn($('#otaUpgrade'),'Installing…','Install update',async()=>{
+  $('#otaUpgrade').disabled=true;
+  const st=await api('/api/ota');
+  const url=st.url;if(!url)throw new Error('No firmware URL — check first');
+  const bar=$('#otaBar'),prog=$('#otaProgress');
+  prog.classList.remove('hidden');bar.style.width='8%';
+  pill($('#otaBadge'),'Downloading…','warn');setOtaMsg('Downloading firmware in browser…','active');
+  const bin=await fetch(url,{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('Firmware HTTP '+r.status);return r.arrayBuffer()});
+  bar.style.width='40%';
+  pill($('#otaBadge'),'Uploading…','warn');
+  setOtaMsg('Uploading '+(bin.byteLength/1024).toFixed(0)+' KB to gateway…','active');
+  const up=await fetch('/api/ota/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:bin});
+  bar.style.width='95%';
+  const j=await up.json().catch(()=>({}));
+  if(!up.ok||j.ok===false){prog.classList.add('hidden');throw new Error(j.error||j.message||('Upload HTTP '+up.status))}
+  bar.style.width='100%';
+  pill($('#otaBadge'),'Rebooting','warn');setOtaMsg(j.message||'Update installed — rebooting…','active');
+  toast('Update installed — gateway rebooting','ok');
+  let n=0;const t=setInterval(async()=>{n++;try{await api('/api/status');
+   if(n>40){clearInterval(t);location.reload()}}catch(e){
+   if(n>2){clearInterval(t);setTimeout(()=>location.reload(),4000)}}},1500)
+ })};
 async function refresh(){try{fill(await api('/api/status'));
- if(!$('#view-system').classList.contains('hidden'))loadPeer()}catch(e){toast('status: '+e.message,'err')}}
+ if(!$('#view-system').classList.contains('hidden')){loadPeer();loadOta()}}catch(e){toast('status: '+e.message,'err')}}
 refresh();setInterval(refresh,4000);
 </script></body></html>)HTML";

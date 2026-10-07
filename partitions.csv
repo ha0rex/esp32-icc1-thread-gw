@@ -1,8 +1,11 @@
-# 16 MB XIAO ESP32-S3 layout for the controller/commissioner MVP.
-# Name,    Type, SubType, Offset, Size,    Flags
-nvs,       data, nvs,     0x9000, 0x20000,
-phy_init,  data, phy,             , 0x1000,
-factory,   app,  factory,         , 0x500000,
-paa_cert,  data, spiffs,          , 0x180000,
-storage,   data, nvs,             , 0x20000,
-coredump,  data, coredump,        , 0x40000,
+# 16 MB XIAO ESP32-S3. NVS, certificates, and storage stay at the same offsets.
+# ota_0 replaces the old factory slot at 0x30000. ota_1 is the update slot.
+# Name,    Type, SubType, Offset,   Size,    Flags
+nvs,       data, nvs,     0x9000,   0x20000,
+phy_init,  data, phy,     0x29000,  0x1000,
+ota_0,     app,  ota_0,   0x30000,  0x500000,
+paa_cert,  data, spiffs,  0x530000, 0x180000,
+storage,   data, nvs,     0x6B0000, 0x20000,
+coredump,  data, coredump,0x6D0000, 0x40000,
+otadata,   data, ota,     0x710000, 0x2000,
+ota_1,     app,  ota_1,   0x720000, 0x500000,
