@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "url": "https://raw.githubusercontent.com/ha0rex/esp32-icc1-thread-gw/ota/esp32_icc1_thread_gw-esp32s3.bin",
+  "sha256": "4734140025208f34312f3e7f858edb837170c66060212b396f08f9f406051c41",
+  "targets": {
+    "esp32s3": {
+      "url": "https://raw.githubusercontent.com/ha0rex/esp32-icc1-thread-gw/ota/esp32_icc1_thread_gw-esp32s3.bin",
+      "sha256": "4734140025208f34312f3e7f858edb837170c66060212b396f08f9f406051c41"
+    }
+  },
+  "channel": "ota",
+  "built": "2026-10-07T06:11:08Z",
+  "commit": "05d0556e31c0d767e77a81187c91d193746cc51b",
+  "changelog": [
+    {
+      "sha": "05d0556",
+      "message": "Add GitHub firmware updates and move device pairing into a modal."
+    },
+    {
+      "sha": "a915c78",
+      "message": "Link the Zigbee gateway and let a weak Thread child rejoin from the edge of range."
+    },
+    {
+      "sha": "19d2a6f",
+      "message": "Show each sensor's Thread signal on the portal, and retry the border router if the radio is not ready yet."
+    },
+    {
+      "sha": "91b4cf5",
+      "message": "Add the Matter controller and HomeKit bridge so Thread sensors update in Home."
+    },
+    {
+      "sha": "7ebe51e",
+      "message": "Initial ESP32 + ICC-1-A Thread/Matter gateway scaffold (0.1.0)."
+    }
+  ]
+}
