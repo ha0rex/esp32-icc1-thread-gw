@@ -146,6 +146,13 @@ color:#c8d4e8}
 .sniff-toolbar label.check{margin:0;display:flex;align-items:center;gap:.35rem;color:var(--muted);font-size:.78rem}
 .sniff-toolbar label.check input{width:auto;margin:0}
 .pill.on{background:rgba(30,200,165,.18);color:var(--accent)}
+.peer-list{display:flex;flex-direction:column;gap:.45rem;margin:.55rem 0}
+.peer-row{display:flex;align-items:center;gap:.65rem;padding:.6rem .7rem;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.02)}
+.peer-row .who{flex:1;min-width:0}
+.peer-row .who b{display:block;font-weight:650}
+.peer-row .who span{color:var(--muted);font-size:.75rem}
+.tag{display:inline-block;font-size:.62rem;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);border-radius:999px;padding:.08rem .4rem;color:var(--muted);margin-left:.35rem;vertical-align:middle}
+.tag.remote{color:var(--accent);border-color:rgba(94,234,212,.45)}
 footer{color:#66748c;text-align:center;font-size:.7rem;padding:0 1rem 1.75rem}
 @media(max-width:560px){.cards{grid-template-columns:1fr 1fr}}
 @media(max-width:420px){.cards{grid-template-columns:1fr}}
@@ -261,6 +268,10 @@ footer{color:#66748c;text-align:center;font-size:.7rem;padding:0 1rem 1.75rem}
 <div class="sniff-log" id="sniffLog">Waiting for traffic…</div>
 </div></section>
 <section id="view-system" class="grid hidden">
+<div class="card" id="peerCard"><h2>Gateway link</h2>
+<p class="hint">Link the Thread and Zigbee gateways on this network. Each can then use the other's devices. The other gateway has to accept the link.</p>
+<div id="peerBody"><p class="hint">Looking for a gateway…</p></div>
+</div>
 <div class="card"><h2>Wi‑Fi</h2>
 <p class="hint" id="wifiNow">—</p>
 <button type="button" class="btn secondary" id="scanBtn">Scan</button>
@@ -407,7 +418,8 @@ function stopSniff(){sniffActive=false;$('#sniffLive').classList.remove('on');
 function showTab(name){document.querySelectorAll('main>section').forEach(s=>s.classList.add('hidden'));
 $('#view-'+name).classList.remove('hidden');
 document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-if(name==='sniff')startSniff();else stopSniff()}
+if(name==='sniff')startSniff();else stopSniff();
+if(name==='system')loadPeer()}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 function chip(text){return '<span class="chip">'+esc(text)+'</span>'}
 function prettyState(text){
@@ -570,6 +582,57 @@ $('#apList').onclick=ev=>{const s=ev.target&&ev.target.dataset&&ev.target.datase
 $('#saveWifi').onclick=async()=>{const ssid=$('#ssid').value.trim();if(!ssid){toast('SSID required','err');return}
   try{await api('/api/wifi/sta',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({ssid,password:$('#password').value})});toast('Connecting…','ok')}catch(e){toast(e.message,'err')}};
-async function refresh(){try{fill(await api('/api/status'))}catch(e){toast('status: '+e.message,'err')}}
+function peerPost(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})}
+function renderPeer(p){
+ const el=$('#peerBody');if(!el||!p)return;
+ const role=r=>r==='zigbee'?'Zigbee':(r==='thread'?'Thread':(r||'Gateway'));
+ let html='';
+ if(p.paired&&p.peer){
+  html+='<div class="peer-row"><div class="who"><b>'+esc(p.peer.name||'Gateway')+'</b><span>Linked · '+esc(role(p.peer.role))+' · '+esc(p.peer.host||'')+'</span></div>'
+   +'<button type="button" class="btn secondary sm" id="peerUnpair">Unpair</button></div>';
+  const devs=p.devices||[];
+  if(devs.length){
+   html+='<div class="peer-list">'+devs.map(d=>{
+    const st=d.has_contact?(d.contact_open?'Open':'Closed'):(d.has_onoff?(d.on?'On':'Off'):(d.has_temp?(Number(d.temp_c).toFixed(1)+' °C'):''));
+    const toggle=d.has_onoff?'<button type="button" class="btn secondary sm" data-peer-id="'+esc(d.id)+'" data-peer-on="'+(d.on?'0':'1')+'">'+(d.on?'Turn off':'Turn on')+'</button>':'';
+    return '<div class="peer-row"><div class="who"><b>'+esc(d.name||d.id)+' <span class="tag remote">remote</span></b><span>'+esc(d.kind||'')+(st?' · '+esc(st):'')+'</span></div>'+toggle+'</div>';
+   }).join('')+'</div>';
+  }else html+='<p class="hint">No devices reported by the other gateway yet.</p>';
+ }else if(p.invite){
+  html+='<div class="banner warn">'+esc(p.invite.name||'A gateway')+' ('+esc(role(p.invite.role))+') wants to link.</div>'
+   +'<div class="btn-row" style="margin-top:.6rem"><button type="button" class="btn" id="peerAccept">Accept</button>'
+   +'<button type="button" class="btn secondary" id="peerDecline">Decline</button></div>';
+ }else if(p.waiting){
+  html+='<div class="banner">Waiting for '+esc(p.waiting.name||'the other gateway')+' to accept. Open System on that gateway and tap Accept.</div>'
+   +'<button type="button" class="btn secondary" id="peerCancel" style="margin-top:.6rem">Cancel</button>';
+ }else{
+  html+='<button type="button" class="btn secondary" id="peerFind">Find gateways</button>';
+  const found=(p.found||[]).filter(f=>!p.self||f.id!==p.self.id);
+  if(found.length){
+   html+='<div class="peer-list">'+found.map(f=>'<div class="peer-row"><div class="who"><b>'+esc(f.name)+'</b><span>'+esc(role(f.role))+' · '+esc(f.host)+'</span></div>'
+    +'<button type="button" class="btn sm" data-peer-host="'+esc(f.host)+'">Pair</button></div>').join('')+'</div>';
+  }else html+='<p class="hint">No other gateway answered yet. It needs to be on this Wi-Fi network, with its portal open.</p>';
+  html+='<label for="peerHost">Or enter its address</label><input id="peerHost" placeholder="192.168.1.20" autocomplete="off">'
+   +'<button type="button" class="btn" id="peerManual">Pair this address</button>';
+ }
+ el.innerHTML=html;
+}
+async function loadPeer(){
+ try{renderPeer(await api('/api/peer'))}catch(e){const el=$('#peerBody');if(el)el.innerHTML='<p class="hint">'+esc(e.message)+'</p>'}
+}
+$('#peerBody').onclick=async ev=>{
+ const t=ev.target;if(!t)return;
+ try{
+  if(t.id==='peerFind'){await peerPost('/api/peer/discover');await loadPeer()}
+  else if(t.id==='peerManual'){const host=($('#peerHost')&&$('#peerHost').value||'').trim();if(!host){toast('Enter an address','err');return}
+   await peerPost('/api/peer/pair',{host});toast('Waiting for the other gateway','ok');await loadPeer()}
+  else if(t.dataset&&t.dataset.peerHost){await peerPost('/api/peer/pair',{host:t.dataset.peerHost});toast('Waiting for the other gateway','ok');await loadPeer()}
+  else if(t.id==='peerAccept'){await peerPost('/api/peer/accept');toast('Linked','ok');await loadPeer()}
+  else if(t.id==='peerDecline'||t.id==='peerCancel'||t.id==='peerUnpair'){await peerPost(t.id==='peerUnpair'?'/api/peer/unpair':(t.id==='peerDecline'?'/api/peer/decline':'/api/peer/unpair'));await loadPeer()}
+  else if(t.dataset&&t.dataset.peerId){await peerPost('/api/peer/command',{id:t.dataset.peerId,on:t.dataset.peerOn==='1'});await loadPeer()}
+ }catch(e){toast(e.message,'err')}
+};
+async function refresh(){try{fill(await api('/api/status'));
+ if(!$('#view-system').classList.contains('hidden'))loadPeer()}catch(e){toast('status: '+e.message,'err')}}
 refresh();setInterval(refresh,4000);
 </script></body></html>)HTML";

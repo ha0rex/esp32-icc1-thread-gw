@@ -1,4 +1,5 @@
 #include "portal.h"
+#include "peer_link.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -663,6 +664,174 @@ extern "C" esp_err_t portal_wifi_post(httpd_req_t *req)
     return send_json(req, "{\"ok\":true}");
 }
 
+static bool peer_token(httpd_req_t *req)
+{
+    char token[48];
+    if (httpd_req_get_hdr_value_str(req, "X-Peer-Token", token, sizeof(token)) != ESP_OK) {
+        return false;
+    }
+    return peer_link_token_ok(token);
+}
+
+static esp_err_t peer_denied(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "401 Unauthorized");
+    return send_json(req, "{\"ok\":false,\"error\":\"Not linked\"}");
+}
+
+extern "C" esp_err_t portal_peer_get(httpd_req_t *req)
+{
+    char *json = static_cast<char *>(malloc(3072));
+    if (!json) {
+        return send_error(req, "Link status is unavailable");
+    }
+    int n = peer_link_status_json(json, 3072);
+    esp_err_t err = (n < 0) ? send_error(req, "Link status is unavailable") : send_json(req, json);
+    free(json);
+    return err;
+}
+
+extern "C" esp_err_t portal_peer_devices_get(httpd_req_t *req)
+{
+    if (!peer_token(req)) {
+        return peer_denied(req);
+    }
+    char *json = static_cast<char *>(malloc(3072));
+    if (!json) {
+        return send_error(req, "Device list is unavailable");
+    }
+    int n = peer_link_write_local_devices(json, 3072);
+    esp_err_t err = (n < 0) ? send_error(req, "Device list is unavailable") : send_json(req, json);
+    free(json);
+    return err;
+}
+
+static esp_err_t peer_result(httpd_req_t *req, esp_err_t err, const char *fail)
+{
+    if (err != ESP_OK) {
+        return send_error(req, fail);
+    }
+    return send_json(req, "{\"ok\":true}");
+}
+
+extern "C" esp_err_t portal_peer_discover_post(httpd_req_t *req)
+{
+    return peer_result(req, peer_link_discover(), "Could not look for a gateway");
+}
+
+extern "C" esp_err_t portal_peer_pair_post(httpd_req_t *req)
+{
+    char body[160];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_error(req, "Address is required");
+    }
+    char host[48];
+    if (!json_find_string(body, "host", host, sizeof(host)) || !host[0]) {
+        return send_error(req, "Address is required");
+    }
+    esp_err_t err = peer_link_pair(host);
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_error(req, "Already linked, or this gateway has no IP yet");
+    }
+    return peer_result(req, err, "The other gateway did not answer");
+}
+
+extern "C" esp_err_t portal_peer_accept_post(httpd_req_t *req)
+{
+    return peer_result(req, peer_link_accept(), "Could not accept the link");
+}
+
+extern "C" esp_err_t portal_peer_decline_post(httpd_req_t *req)
+{
+    return peer_result(req, peer_link_decline(), "Could not decline");
+}
+
+extern "C" esp_err_t portal_peer_unpair_post(httpd_req_t *req)
+{
+    return peer_result(req, peer_link_unpair(), "Could not unpair");
+}
+
+static esp_err_t read_peer_body(httpd_req_t *req, char *body, size_t len, char *id, size_t id_len,
+                                char *name, char *role, char *host, char *token)
+{
+    if (read_body(req, body, len) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    json_find_string(body, "id", id, id_len);
+    json_find_string(body, "name", name, 40);
+    json_find_string(body, "role", role, 12);
+    json_find_string(body, "host", host, 48);
+    json_find_string(body, "token", token, 40);
+    return ESP_OK;
+}
+
+extern "C" esp_err_t portal_peer_invite_post(httpd_req_t *req)
+{
+    char body[320], id[20], name[40], role[12], host[48], token[40];
+    name[0] = role[0] = host[0] = token[0] = id[0] = 0;
+    if (read_peer_body(req, body, sizeof(body), id, sizeof(id), name, role, host, token) != ESP_OK) {
+        return send_error(req, "Invite was incomplete");
+    }
+    esp_err_t err = peer_link_on_invite(id, name, role, host, token);
+    if (err != ESP_OK) {
+        return send_error(req, "This gateway is already linked");
+    }
+    return send_json(req, "{\"ok\":true,\"name\":\"ICC Thread Gateway\",\"role\":\"thread\"}");
+}
+
+extern "C" esp_err_t portal_peer_confirm_post(httpd_req_t *req)
+{
+    char body[320], id[20], name[40], role[12], host[48], token[40];
+    id[0] = name[0] = role[0] = host[0] = token[0] = 0;
+    if (read_peer_body(req, body, sizeof(body), id, sizeof(id), name, role, host, token) != ESP_OK) {
+        return send_error(req, "Confirmation was incomplete");
+    }
+    char hdr[48];
+    if (httpd_req_get_hdr_value_str(req, "X-Peer-Token", hdr, sizeof(hdr)) == ESP_OK && hdr[0]) {
+        snprintf(token, sizeof(token), "%s", hdr);
+    }
+    return peer_result(req, peer_link_on_confirm(id, name, role, host, token),
+                       "This link request is no longer waiting");
+}
+
+extern "C" esp_err_t portal_peer_bye_post(httpd_req_t *req)
+{
+    char token[48];
+    token[0] = 0;
+    if (httpd_req_get_hdr_value_str(req, "X-Peer-Token", token, sizeof(token)) != ESP_OK) {
+        char body[120];
+        if (read_body(req, body, sizeof(body)) == ESP_OK) {
+            json_find_string(body, "token", token, sizeof(token));
+        }
+    }
+    return peer_result(req, peer_link_on_bye(token), "Not linked");
+}
+
+extern "C" esp_err_t portal_peer_set_post(httpd_req_t *req)
+{
+    if (!peer_token(req)) {
+        return peer_denied(req);
+    }
+    char body[120], id[24];
+    if (read_body(req, body, sizeof(body)) != ESP_OK ||
+        !json_find_string(body, "id", id, sizeof(id)) || !id[0]) {
+        return send_error(req, "Device id is required");
+    }
+    bool on = strstr(body, "\"on\":true") != nullptr;
+    return peer_result(req, peer_link_set_local(id, on), "Could not reach that device");
+}
+
+extern "C" esp_err_t portal_peer_command_post(httpd_req_t *req)
+{
+    char body[120], id[24];
+    if (read_body(req, body, sizeof(body)) != ESP_OK ||
+        !json_find_string(body, "id", id, sizeof(id)) || !id[0]) {
+        return send_error(req, "Device id is required");
+    }
+    bool on = strstr(body, "\"on\":true") != nullptr;
+    return peer_result(req, peer_link_set_remote(id, on), "The other gateway did not accept the command");
+}
+
 extern "C" esp_err_t portal_homekit_reset_post(httpd_req_t *req)
 {
     esp_err_t err = homekit_bridge_reset_pairings();
@@ -682,8 +851,9 @@ esp_err_t portal_start(void)
     }
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = 80;
+    /* 16384 does not fit in internal RAM (httpd_start returns ESP_ERR_HTTPD_TASK). */
     cfg.stack_size = 12288;
-    cfg.max_uri_handlers = 16;
+    cfg.max_uri_handlers = 28;
     cfg.lru_purge_enable = true;
     cfg.recv_wait_timeout = 15;
     cfg.send_wait_timeout = 15;
@@ -706,6 +876,18 @@ esp_err_t portal_start(void)
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = portal_wifi_scan_get},
         {.uri = "/api/wifi/sta", .method = HTTP_POST, .handler = portal_wifi_post},
         {.uri = "/api/homekit/reset", .method = HTTP_POST, .handler = portal_homekit_reset_post},
+        {.uri = "/api/peer", .method = HTTP_GET, .handler = portal_peer_get},
+        {.uri = "/api/peer/devices", .method = HTTP_GET, .handler = portal_peer_devices_get},
+        {.uri = "/api/peer/discover", .method = HTTP_POST, .handler = portal_peer_discover_post},
+        {.uri = "/api/peer/pair", .method = HTTP_POST, .handler = portal_peer_pair_post},
+        {.uri = "/api/peer/accept", .method = HTTP_POST, .handler = portal_peer_accept_post},
+        {.uri = "/api/peer/decline", .method = HTTP_POST, .handler = portal_peer_decline_post},
+        {.uri = "/api/peer/unpair", .method = HTTP_POST, .handler = portal_peer_unpair_post},
+        {.uri = "/api/peer/invite", .method = HTTP_POST, .handler = portal_peer_invite_post},
+        {.uri = "/api/peer/confirm", .method = HTTP_POST, .handler = portal_peer_confirm_post},
+        {.uri = "/api/peer/bye", .method = HTTP_POST, .handler = portal_peer_bye_post},
+        {.uri = "/api/peer/set", .method = HTTP_POST, .handler = portal_peer_set_post},
+        {.uri = "/api/peer/command", .method = HTTP_POST, .handler = portal_peer_command_post},
     };
     for (const httpd_uri_t &route : routes) {
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(s_server, &route), TAG,

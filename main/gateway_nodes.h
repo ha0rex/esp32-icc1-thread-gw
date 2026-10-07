@@ -154,3 +154,9 @@ esp_err_t gateway_nodes_read_now(uint64_t node_id);
  * The text starts with '['.
  */
 esp_err_t gateway_nodes_write_json(char *out, size_t out_len);
+
+/** JSON array of devices another gateway on the LAN may read or switch. */
+int gateway_nodes_write_peer_devices(char *buf, size_t len);
+
+/** Turn a local on/off device on or off. id is the decimal node id. */
+esp_err_t gateway_nodes_peer_set_on(const char *id, bool on);

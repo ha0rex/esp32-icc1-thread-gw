@@ -5,6 +5,7 @@
 
 #include "esp_err.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "nvs_flash.h"
@@ -31,6 +32,7 @@
 #include "gateway_nodes.h"
 #include "openthread/thread.h"
 #include "homekit_bridge.h"
+#include "peer_link.h"
 #include "portal.h"
 
 #include <app/server/Server.h>
@@ -79,6 +81,7 @@ bool thread_attached(void)
 
 void sensor_refresh_task(void *)
 {
+    ESP_LOGI(TAG, "Sensor task running");
     for (int i = 0; i < 40 && !thread_attached(); ++i) {
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
@@ -202,13 +205,31 @@ extern "C" void app_main()
         ESP_LOGW(TAG, "HomeKit bridge did not start: %s", esp_err_to_name(homekit_err));
     }
 
+    static const peer_link_cfg_t peer_cfg = {
+        .role = "thread",
+        .name = "ICC Thread Gateway",
+        .write_devices = gateway_nodes_write_peer_devices,
+        .set_on = gateway_nodes_peer_set_on,
+    };
+    peer_link_start(&peer_cfg);
+
     esp_err_t portal_err = portal_start();
     if (portal_err != ESP_OK) {
         ESP_LOGW(TAG, "Portal did not start: %s", esp_err_to_name(portal_err));
     }
 
     esp_wifi_set_ps(WIFI_PS_NONE);
-    xTaskCreate(sensor_refresh_task, "sensors", 8192, nullptr, 3, nullptr);
+    /* Internal RAM only has room for the portal and the link task. This
+     * task does not open TCP sockets, so its stack can sit in PSRAM. */
+    StackType_t *sensor_stack =
+        static_cast<StackType_t *>(heap_caps_malloc(8192, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    StaticTask_t *sensor_tcb = static_cast<StaticTask_t *>(
+        heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!sensor_stack || !sensor_tcb ||
+        !xTaskCreateStatic(sensor_refresh_task, "sensors", 8192, nullptr, 4, sensor_stack,
+                           sensor_tcb)) {
+        ESP_LOGE(TAG, "Sensor task did not start");
+    }
     ESP_LOGI(TAG, "Standalone Matter gateway ready");
     ESP_LOGI(TAG, "Connect Wi-Fi: matter esp wifi connect <ssid> <password>");
     ESP_LOGI(TAG, "Gateway help: matter esp gateway help");

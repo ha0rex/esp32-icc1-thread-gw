@@ -1504,6 +1504,7 @@ esp_err_t send_watch(const node_entry_t &entry)
         entry.node_id, std::move(attrs), std::move(events), 0, 10, true, sensor_attribute_report,
         sensor_event_report, on_subscribe_done, on_subscribe_fail, on_subscribe_established);
     if (!command) {
+        ESP_LOGW(TAG, "No memory to subscribe node=%" PRIu64, entry.node_id);
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "Subscribing to %s node=%" PRIu64, kind_name(entry.kind), entry.node_id);
@@ -1911,7 +1912,10 @@ void refresh_locked(const node_entry_t *nodes, size_t count)
     // The rest follow from retry_watch, two at a time. Starting every sensor
     // in the same instant made the secure sessions time out.
     if (count > 0) {
-        send_watch(nodes[0]);
+        esp_err_t err = send_watch(nodes[0]);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Subscribe start failed: %s", esp_err_to_name(err));
+        }
     }
 }
 
@@ -2618,6 +2622,87 @@ esp_err_t gateway_nodes_write_json(char *out, size_t out_len)
     out[used++] = ']';
     out[used] = 0;
     return ESP_OK;
+}
+
+static bool kind_has_onoff(gateway_kind_t kind)
+{
+    switch (kind) {
+    case GW_KIND_PLUG:
+    case GW_KIND_LIGHT:
+    case GW_KIND_LIGHT_CT:
+    case GW_KIND_LIGHT_COLOR:
+    case GW_KIND_ONOFF:
+    case GW_KIND_FAN:
+    case GW_KIND_SWITCH:
+        return true;
+    default:
+        return false;
+    }
+}
+
+int gateway_nodes_write_peer_devices(char *buf, size_t len)
+{
+    if (!buf || len < 3) {
+        return -1;
+    }
+    size_t used = 0;
+    int wrote = snprintf(buf, len, "[");
+    if (wrote < 0 || (size_t)wrote >= len) {
+        return -1;
+    }
+    used = (size_t)wrote;
+    bool first = true;
+    int count = gateway_nodes_count();
+    for (int i = 0; i < count && used + 180 < len; i++) {
+        gateway_node_view_t view;
+        if (gateway_nodes_copy(i, &view) != ESP_OK) {
+            continue;
+        }
+        bool contact = view.kind == GW_KIND_CONTACT;
+        bool temp = view.kind == GW_KIND_CLIMATE || view.kind == GW_KIND_THERMOSTAT;
+        bool onoff = kind_has_onoff(view.kind);
+        if (!contact && !temp && !onoff && view.kind != GW_KIND_MOTION) {
+            continue;
+        }
+        char name[48];
+        size_t k = 0;
+        for (const char *p = view.name; *p && k + 1 < sizeof(name); p++) {
+            name[k++] = (*p == '"' || *p == '\\') ? '\'' : *p;
+        }
+        name[k] = 0;
+        wrote = snprintf(buf + used, len - used,
+                         "%s{\"id\":\"%llu\",\"name\":\"%s\",\"kind\":\"%s\","
+                         "\"has_temp\":%s,\"temp_c\":%.2f,\"has_onoff\":%s,\"on\":%s,"
+                         "\"has_contact\":%s,\"contact_open\":%s}",
+                         first ? "" : ",", (unsigned long long)view.node_id, name,
+                         kind_name(static_cast<sensor_kind_t>(view.kind)), temp ? "true" : "false",
+                         (double)view.temp_c, onoff ? "true" : "false", view.on ? "true" : "false",
+                         contact ? "true" : "false", view.contact_open ? "true" : "false");
+        if (wrote < 0 || (size_t)wrote >= len - used) {
+            break;
+        }
+        used += (size_t)wrote;
+        first = false;
+    }
+    if (used + 2 > len) {
+        return -1;
+    }
+    buf[used++] = ']';
+    buf[used] = 0;
+    return (int)used;
+}
+
+esp_err_t gateway_nodes_peer_set_on(const char *id, bool on)
+{
+    if (!id || !id[0]) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    char *end = nullptr;
+    unsigned long long node = strtoull(id, &end, 10);
+    if (!end || *end || node == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return gateway_nodes_set_on(node, on);
 }
 
 esp_err_t gateway_nodes_register_console(void)

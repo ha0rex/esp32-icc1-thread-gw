@@ -31,6 +31,16 @@ set(EXTRA_COMPONENT_DIRS
     "${ICC_HAP_ROOT}/hkdf-sha"
 )
 
+# OpenThread answers a weak child too late, then rejects its join. The
+# sources live in ESP-IDF, so apply that fix before the stack is compiled.
+execute_process(
+    COMMAND python3 "${CMAKE_CURRENT_LIST_DIR}/scripts/patch-openthread-weak-child.py"
+    RESULT_VARIABLE ICC_OT_PATCH
+)
+if(NOT ICC_OT_PATCH EQUAL 0)
+    message(FATAL_ERROR "OpenThread weak-child patch failed (${ICC_OT_PATCH})")
+endif()
+
 set(PROJECT_VER "0.2.0")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
